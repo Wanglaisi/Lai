@@ -1,17 +1,21 @@
 # main.py
 from fastapi import FastAPI, Request
-import aiohttp, random, asyncio, os
+import aiohttp
+import random
+import asyncio
+import os
 from collections import deque
 
-app = FastAPI(title="NIM Proxy - 极简 aiohttp 版")
+app = FastAPI(title="NIM Proxy - 极简版")
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
+# 读取 key
 raw_keys = os.getenv("NIM_API_KEYS", "")
 KEYS = [k.strip() for k in raw_keys.split(",") if k.strip()]
 
 if not KEYS:
-    raise ValueError("NIM_API_KEYS 环境变量为空！")
+    raise ValueError("NIM_API_KEYS 环境变量为空！请检查 Northflank Environment 设置")
 
 key_queue = deque(KEYS)
 RATE_LIMITS = {k: asyncio.Semaphore(35) for k in KEYS}
@@ -24,7 +28,11 @@ async def get_next_key():
 @app.get("/")
 @app.get("/health")
 async def health():
-    return {"status": "ok", "keys_loaded": len(KEYS), "message": "极简 aiohttp 版运行中"}
+    return {
+        "status": "ok", 
+        "keys_loaded": len(KEYS), 
+        "message": "极简 aiohttp 版已启动"
+    }
 
 @app.get("/v1/models")
 async def list_models():
@@ -59,10 +67,6 @@ async def proxy(request: Request):
                         return await resp.json()
                     else:
                         text = await resp.text()
-                        return {"error": f"NIM 错误 ({resp.status}): {text[:400]}"}
+                        return {"error": f"NIM 后端错误 ({resp.status}): {text[:500]}"}
     except Exception as e:
         return {"error": f"代理错误: {str(e)}"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
