@@ -1,10 +1,9 @@
 # main.py
 from fastapi import FastAPI, Request
-import httpx, random, time, asyncio
+import aiohttp, random, asyncio, os, json
 from collections import deque
-import os
 
-app = FastAPI(title="NVIDIA NIM Multi-Key Proxy")
+app = FastAPI(title="NVIDIA NIM Multi-Key Proxy - aiohttp 版")
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
@@ -25,7 +24,7 @@ async def get_next_key():
 @app.get("/")
 @app.get("/health")
 async def health():
-    return {"status": "ok", "keys_loaded": len(KEYS), "message": "Content-Length 修复版"}
+    return {"status": "ok", "keys_loaded": len(KEYS), "message": "aiohttp 版 - 已解决 Content-Length 错误"}
 
 @app.get("/v1/models")
 async def list_models():
@@ -36,7 +35,6 @@ async def list_models():
             {"id": "z-ai/glm-5", "object": "model"},
             {"id": "deepseek-ai/deepseek-r1-distill-llama-70b", "object": "model"},
             {"id": "nvidia/nemotron-3-super-120b-a12b", "object": "model"},
-            {"id": "nvidia/llama-3.3-nemotron-super-49b-v1", "object": "model"}
         ]
     }
 
@@ -53,39 +51,34 @@ async def proxy(request: Request):
     for attempt in range(max_attempts):
         try:
             async with RATE_LIMITS[key]:
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(120.0, connect=20.0),
-                    limits=httpx.Limits(max_keepalive_connections=5, max_connections=20, keepalive_expiry=30),
-                    http2=False,
-                    follow_redirects=True
-                ) as client:
-                    resp = await client.post(
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+                    async with session.post(
                         f"{NIM_BASE}/chat/completions",
                         json=body,
-                        headers={**headers, "Authorization": f"Bearer {key}"}
-                    )
+                        headers={**headers, "Authorization": f"Bearer {key}"},
+                    ) as resp:
+                        
+                        await asyncio.sleep(random.uniform(0.3, 0.8))
 
-                    await asyncio.sleep(random.uniform(0.3, 0.8))  # 加大 jitter
-
-                    if resp.is_success:
-                        try:
-                            return resp.json()
-                        except Exception:
-                            # 如果 json 解析失败，尝试返回原始文本
-                            return {"error": {"message": f"Response not JSON: {resp.text[:300]}", "status_code": resp.status_code}}
-                    else:
-                        error_text = resp.text[:600] or "Empty response"
-                        return {
-                            "error": {
-                                "message": f"NIM 后端错误 ({resp.status_code}): {error_text}",
-                                "type": "nvidia_error",
-                                "status_code": resp.status_code
+                        if resp.status == 200:
+                            try:
+                                return await resp.json()
+                            except:
+                                text = await resp.text()
+                                return {"error": {"message": f"返回非JSON: {text[:300]}", "status": resp.status}}
+                        else:
+                            text = await resp.text()
+                            return {
+                                "error": {
+                                    "message": f"NIM 后端错误 ({resp.status}): {text[:600]}",
+                                    "type": "nvidia_error",
+                                    "status_code": resp.status
+                                }
                             }
-                        }
         except Exception as e:
             if attempt == max_attempts - 1:
                 return {"error": {"message": f"最终代理错误: {str(e)}", "type": "proxy_error", "attempts": max_attempts}}
-            await asyncio.sleep(0.6 * (attempt + 1))  # 指数退避
+            await asyncio.sleep(0.6 * (attempt + 1))
 
 if __name__ == "__main__":
     import uvicorn
