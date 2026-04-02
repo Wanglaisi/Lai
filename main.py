@@ -25,18 +25,18 @@ async def get_next_key():
 @app.get("/")
 @app.get("/health")
 async def health():
-    return {"status": "ok", "keys_loaded": len(KEYS), "message": "升级版代理 - 修复 Content-Length 问题"}
+    return {"status": "ok", "keys_loaded": len(KEYS), "message": "Content-Length 修复版"}
 
 @app.get("/v1/models")
 async def list_models():
     return {
         "object": "list",
         "data": [
-            {"id": "nvidia/llama-3.3-nemotron-super-49b-v1", "object": "model"},
+            {"id": "moonshotai/kimi-k2.5", "object": "model"},
+            {"id": "z-ai/glm-5", "object": "model"},
             {"id": "deepseek-ai/deepseek-r1-distill-llama-70b", "object": "model"},
             {"id": "nvidia/nemotron-3-super-120b-a12b", "object": "model"},
-            {"id": "z-ai/glm-5", "object": "model"},
-            {"id": "moonshotai/kimi-k2.5", "object": "model"}   # 保留但不推荐首选
+            {"id": "nvidia/llama-3.3-nemotron-super-49b-v1", "object": "model"}
         ]
     }
 
@@ -48,43 +48,44 @@ async def proxy(request: Request):
     headers["user-agent"] = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/{random.randint(500,600)}.0"
 
     key = await get_next_key()
-    attempt = 0
-    max_attempts = 2
+    max_attempts = 3
 
-    while attempt < max_attempts:
+    for attempt in range(max_attempts):
         try:
             async with RATE_LIMITS[key]:
-                # 关键修复：关闭 http2 + 增加超时 + limits
                 async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(90.0, connect=15.0),
-                    limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
-                    http2=False   # 临时关闭 http2 规避协议错误
+                    timeout=httpx.Timeout(120.0, connect=20.0),
+                    limits=httpx.Limits(max_keepalive_connections=5, max_connections=20, keepalive_expiry=30),
+                    http2=False,
+                    follow_redirects=True
                 ) as client:
                     resp = await client.post(
                         f"{NIM_BASE}/chat/completions",
                         json=body,
-                        headers={**headers, "Authorization": f"Bearer {key}"},
-                        follow_redirects=True,
+                        headers={**headers, "Authorization": f"Bearer {key}"}
                     )
 
-                    await asyncio.sleep(random.uniform(0.25, 0.65))
+                    await asyncio.sleep(random.uniform(0.3, 0.8))  # 加大 jitter
 
                     if resp.is_success:
-                        return resp.json()
+                        try:
+                            return resp.json()
+                        except Exception:
+                            # 如果 json 解析失败，尝试返回原始文本
+                            return {"error": {"message": f"Response not JSON: {resp.text[:300]}", "status_code": resp.status_code}}
                     else:
-                        error_text = resp.text[:800]
+                        error_text = resp.text[:600] or "Empty response"
                         return {
                             "error": {
-                                "message": f"NIM 返回错误 ({resp.status_code}): {error_text}",
-                                "type": "nvidia_backend_error",
+                                "message": f"NIM 后端错误 ({resp.status_code}): {error_text}",
+                                "type": "nvidia_error",
                                 "status_code": resp.status_code
                             }
                         }
         except Exception as e:
-            attempt += 1
-            if attempt == max_attempts:
-                return {"error": {"message": f"代理错误 (已重试): {str(e)}", "type": "proxy_error"}}
-            await asyncio.sleep(0.5)  # 重试前等待
+            if attempt == max_attempts - 1:
+                return {"error": {"message": f"最终代理错误: {str(e)}", "type": "proxy_error", "attempts": max_attempts}}
+            await asyncio.sleep(0.6 * (attempt + 1))  # 指数退避
 
 if __name__ == "__main__":
     import uvicorn
