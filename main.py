@@ -10,15 +10,15 @@ app = FastAPI(title="NVIDIA NIM Multi-Key Proxy")
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
-# 从 Northflank 加密变量读取 keys
+# 读取 Northflank 加密变量里的 keys
 raw_keys = os.getenv("NIM_API_KEYS", "")
 KEYS = [k.strip() for k in raw_keys.split(",") if k.strip()]
 
 if not KEYS:
-    raise ValueError("NIM_API_KEYS 环境变量为空！请在 Northflank 设置")
+    raise ValueError("NIM_API_KEYS 环境变量为空！请在 Northflank Environment 中设置")
 
 key_queue = deque(KEYS)
-RATE_LIMITS = {k: asyncio.Semaphore(35) for k in KEYS}   # 每个 key 限流
+RATE_LIMITS = {k: asyncio.Semaphore(35) for k in KEYS}
 
 async def get_next_key():
     key = key_queue.popleft()
@@ -32,7 +32,7 @@ async def health():
     return {
         "status": "ok",
         "keys_loaded": len(KEYS),
-        "message": "NIM 多 key 轮询代理运行正常"
+        "message": "NIM 多 key 轮询代理运行正常（2026-04-02 升级版）"
     }
 
 # ====================== 模型列表（新增） ======================
@@ -61,7 +61,30 @@ async def proxy(request: Request):
 
     try:
         async with RATE_LIMITS[key]:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=120)
-            ) as session:
-                async
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+                async with session.post(
+                    f"{NIM_BASE}/chat/completions",
+                    json=body,
+                    headers={**headers, "Authorization": f"Bearer {key}"}
+                ) as resp:
+                    
+                    await asyncio.sleep(random.uniform(0.35, 0.85))  # jitter
+
+                    if resp.status == 200:
+                        try:
+                            return await resp.json()
+                        except Exception:
+                            text = await resp.text()
+                            return {"error": f"返回非JSON内容: {text[:400]}"}
+                    else:
+                        text = await resp.text()
+                        return {
+                            "error": f"NIM 后端错误 ({resp.status}): {text[:700]}"
+                        }
+    except Exception as e:
+        return {"error": f"代理内部错误: {str(e)}"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
