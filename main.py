@@ -6,7 +6,7 @@ import asyncio
 import os
 from collections import deque
 
-app = FastAPI(title="NIM Proxy")
+app = FastAPI()
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
