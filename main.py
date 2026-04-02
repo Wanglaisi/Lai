@@ -1,9 +1,9 @@
 # main.py
 from fastapi import FastAPI, Request
-import aiohttp, random, asyncio, os, json
+import aiohttp, random, asyncio, os
 from collections import deque
 
-app = FastAPI(title="NVIDIA NIM Multi-Key Proxy - aiohttp 版")
+app = FastAPI(title="NIM Proxy - 极简 aiohttp 版")
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
@@ -24,7 +24,7 @@ async def get_next_key():
 @app.get("/")
 @app.get("/health")
 async def health():
-    return {"status": "ok", "keys_loaded": len(KEYS), "message": "aiohttp 版 - 已解决 Content-Length 错误"}
+    return {"status": "ok", "keys_loaded": len(KEYS), "message": "极简 aiohttp 版运行中"}
 
 @app.get("/v1/models")
 async def list_models():
@@ -34,7 +34,6 @@ async def list_models():
             {"id": "moonshotai/kimi-k2.5", "object": "model"},
             {"id": "z-ai/glm-5", "object": "model"},
             {"id": "deepseek-ai/deepseek-r1-distill-llama-70b", "object": "model"},
-            {"id": "nvidia/nemotron-3-super-120b-a12b", "object": "model"},
         ]
     }
 
@@ -46,39 +45,23 @@ async def proxy(request: Request):
     headers["user-agent"] = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/{random.randint(500,600)}.0"
 
     key = await get_next_key()
-    max_attempts = 3
 
-    for attempt in range(max_attempts):
-        try:
-            async with RATE_LIMITS[key]:
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
-                    async with session.post(
-                        f"{NIM_BASE}/chat/completions",
-                        json=body,
-                        headers={**headers, "Authorization": f"Bearer {key}"},
-                    ) as resp:
-                        
-                        await asyncio.sleep(random.uniform(0.3, 0.8))
-
-                        if resp.status == 200:
-                            try:
-                                return await resp.json()
-                            except:
-                                text = await resp.text()
-                                return {"error": {"message": f"返回非JSON: {text[:300]}", "status": resp.status}}
-                        else:
-                            text = await resp.text()
-                            return {
-                                "error": {
-                                    "message": f"NIM 后端错误 ({resp.status}): {text[:600]}",
-                                    "type": "nvidia_error",
-                                    "status_code": resp.status
-                                }
-                            }
-        except Exception as e:
-            if attempt == max_attempts - 1:
-                return {"error": {"message": f"最终代理错误: {str(e)}", "type": "proxy_error", "attempts": max_attempts}}
-            await asyncio.sleep(0.6 * (attempt + 1))
+    try:
+        async with RATE_LIMITS[key]:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
+                async with session.post(
+                    f"{NIM_BASE}/chat/completions",
+                    json=body,
+                    headers={**headers, "Authorization": f"Bearer {key}"}
+                ) as resp:
+                    await asyncio.sleep(random.uniform(0.3, 0.7))
+                    if resp.status == 200:
+                        return await resp.json()
+                    else:
+                        text = await resp.text()
+                        return {"error": f"NIM 错误 ({resp.status}): {text[:400]}"}
+    except Exception as e:
+        return {"error": f"代理错误: {str(e)}"}
 
 if __name__ == "__main__":
     import uvicorn
