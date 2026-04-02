@@ -6,16 +6,15 @@ import asyncio
 import os
 from collections import deque
 
-app = FastAPI(title="NIM Proxy - 极简版")
+app = FastAPI(title="NIM Proxy")
 
 NIM_BASE = "https://integrate.api.nvidia.com/v1"
 
-# 读取 key
 raw_keys = os.getenv("NIM_API_KEYS", "")
 KEYS = [k.strip() for k in raw_keys.split(",") if k.strip()]
 
 if not KEYS:
-    raise ValueError("NIM_API_KEYS 环境变量为空！请检查 Northflank Environment 设置")
+    raise ValueError("NIM_API_KEYS 环境变量为空！")
 
 key_queue = deque(KEYS)
 RATE_LIMITS = {k: asyncio.Semaphore(35) for k in KEYS}
@@ -28,22 +27,7 @@ async def get_next_key():
 @app.get("/")
 @app.get("/health")
 async def health():
-    return {
-        "status": "ok", 
-        "keys_loaded": len(KEYS), 
-        "message": "极简 aiohttp 版已启动"
-    }
-
-@app.get("/v1/models")
-async def list_models():
-    return {
-        "object": "list",
-        "data": [
-            {"id": "moonshotai/kimi-k2.5", "object": "model"},
-            {"id": "z-ai/glm-5", "object": "model"},
-            {"id": "deepseek-ai/deepseek-r1-distill-llama-70b", "object": "model"},
-        ]
-    }
+    return {"status": "ok", "keys_loaded": len(KEYS), "message": "极简版启动成功"}
 
 @app.post("/v1/chat/completions")
 async def proxy(request: Request):
@@ -67,6 +51,6 @@ async def proxy(request: Request):
                         return await resp.json()
                     else:
                         text = await resp.text()
-                        return {"error": f"NIM 后端错误 ({resp.status}): {text[:500]}"}
+                        return {"error": f"NIM 错误 ({resp.status}): {text[:400]}"}
     except Exception as e:
         return {"error": f"代理错误: {str(e)}"}
